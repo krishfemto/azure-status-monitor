@@ -1,0 +1,176 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Service Status</title>
+<style>
+  body {
+    font-family: -apple-system, "Segoe UI", Arial, sans-serif;
+    background: #0f1115;
+    color: #e6e6e6;
+    max-width: 600px;
+    margin: 40px auto;
+    padding: 0 20px;
+  }
+  h1 {
+    font-size: 24px;
+    font-weight: 500;
+  }
+  .subtitle {
+    color: #9a9a9a;
+    font-size: 13px;
+    margin-bottom: 32px;
+  }
+  .service {
+    background: #1a1d24;
+    border-radius: 8px;
+    padding: 16px 20px;
+    margin-bottom: 12px;
+  }
+  .service-top {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 10px;
+  }
+  .service-name {
+    font-size: 15px;
+    font-weight: 500;
+  }
+  .service-url {
+    font-size: 12px;
+    color: #8a8a8a;
+  }
+  .status-badge {
+    font-size: 12px;
+    padding: 4px 12px;
+    border-radius: 6px;
+    font-weight: 500;
+  }
+  .up { background: rgba(34, 197, 94, 0.15); color: #4ade80; }
+  .down { background: rgba(239, 68, 68, 0.15); color: #f87171; }
+  .checking { background: rgba(156, 163, 175, 0.15); color: #9ca3af; }
+  .history {
+    display: flex;
+    gap: 3px;
+    margin-top: 4px;
+  }
+  .dot {
+    width: 14px;
+    height: 22px;
+    border-radius: 3px;
+  }
+  .dot.up { background: #4ade80; }
+  .dot.down { background: #f87171; }
+  .response-time {
+    font-size: 11px;
+    color: #6a6a6a;
+    margin-top: 6px;
+  }
+  .footer {
+    margin-top: 24px;
+    font-size: 12px;
+    color: #6a6a6a;
+    text-align: center;
+  }
+  button {
+    background: #2a2d35;
+    color: #e6e6e6;
+    border: none;
+    padding: 8px 16px;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 13px;
+    margin-top: 16px;
+  }
+  button:hover { background: #3a3d45; }
+</style>
+</head>
+<body>
+
+<h1>Service status</h1>
+<p class="subtitle" id="last-checked">Loading...</p>
+
+<div id="services"></div>
+
+<button onclick="loadData()">Refresh</button>
+
+<p class="footer">Checked automatically every 5 minutes by an Azure Function</p>
+
+<script>
+// Replace with your storage account name
+const ACCOUNT = "krishnastatus28355";
+// Replace with your SAS token (starts with "se=...")
+const SAS = "se=2026-12-31&sp=r&sv=2026-04-06&ss=t&srt=o&sig=G0L5ITT8CAgwV1C1tnGMyy1ZuMGLiMMJTvvm9WqfFr0%3D";
+
+const TABLE_URL = `https://${ACCOUNT}.table.core.windows.net/statuschecks()?${SAS}`;
+
+async function loadData() {
+  document.getElementById("last-checked").textContent = "Loading...";
+  try {
+    const res = await fetch(TABLE_URL, {
+      headers: { "Accept": "application/json;odata=nometadata" }
+    });
+    const data = await res.json();
+    render(data.value || []);
+  } catch (e) {
+    document.getElementById("services").innerHTML =
+      `<p style="color:#f87171">Could not load data: ${e.message}</p>`;
+    document.getElementById("last-checked").textContent = "Error loading data";
+  }
+}
+
+function render(rows) {
+  // Group rows by service name (PartitionKey), each row is one check
+  const grouped = {};
+  rows.forEach(r => {
+    if (!grouped[r.PartitionKey]) grouped[r.PartitionKey] = [];
+    grouped[r.PartitionKey].push(r);
+  });
+
+  const container = document.getElementById("services");
+  container.innerHTML = "";
+
+  let latestTime = null;
+
+  Object.keys(grouped).forEach(name => {
+    // RowKey is (Long.MAX_VALUE - timestamp), so smaller RowKey = newer.
+    // Sort ascending by RowKey to get newest first, then take last 10 and reverse for display order.
+    const checks = grouped[name]
+      .sort((a, b) => (a.RowKey > b.RowKey ? 1 : -1))
+      .slice(0, 10)
+      .reverse();
+
+    const latest = checks[checks.length - 1];
+    if (!latestTime || latest.CheckedAt > latestTime) latestTime = latest.CheckedAt;
+
+    const dots = checks.map(c =>
+      `<div class="dot ${c.Status}" title="${c.CheckedAt}: ${c.Status}"></div>`
+    ).join("");
+
+    const div = document.createElement("div");
+    div.className = "service";
+    div.innerHTML = `
+      <div class="service-top">
+        <div>
+          <div class="service-name">${name}</div>
+          <div class="service-url">${latest.Url}</div>
+        </div>
+        <div class="status-badge ${latest.Status}">${latest.Status}</div>
+      </div>
+      <div class="history">${dots}</div>
+      <div class="response-time">Last response: ${latest.ResponseTimeMs}ms</div>
+    `;
+    container.appendChild(div);
+  });
+
+  document.getElementById("last-checked").textContent =
+    latestTime ? "Last checked: " + new Date(latestTime).toLocaleString() : "No data yet";
+}
+
+loadData();
+</script>
+
+</body>
+</html>
